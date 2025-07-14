@@ -3,15 +3,19 @@ let elements = {};
 let state = {
     currentTab: 'html',
     currentOrientation: 'portrait',
-    updateTimeout: null
+    updateTimeout: null,
 };
 
 // Initialize the application
 function initializeApp() {
     initializeElements();
     setupEventListeners();
+    setupResizablePanels();
+    setupShareFeature();
+    setupResponsiveDrag(); // Add this line
     loadDefaultCode();
     updatePreview();
+    loadCodeFromURL();
 }
 
 function initializeElements() {
@@ -20,11 +24,11 @@ function initializeElements() {
     elements.cssEditor = document.getElementById('cssCode');
     elements.jsEditor = document.getElementById('jsCode');
     elements.previewFrame = document.getElementById('previewFrame');
-    
+
     // Tab elements
     elements.tabButtons = document.querySelectorAll('.tab-btn');
     elements.editorWrappers = document.querySelectorAll('.editor-wrapper');
-    
+
     // Button elements
     elements.runBtn = document.getElementById('runBtn');
     elements.resetBtn = document.getElementById('resetBtn');
@@ -35,14 +39,17 @@ function initializeElements() {
     elements.orientationBtn = document.getElementById('orientationBtn');
     elements.deviceFrame = document.getElementById('deviceFrame');
     elements.previewInfo = document.getElementById('previewInfo');
-    
+
     // Status elements
     elements.lastUpdate = document.getElementById('lastUpdate');
+    elements.customSizeControls = document.getElementById('customSizeControls');
+    elements.customWidth = document.getElementById('customWidth');
+    elements.customHeight = document.getElementById('customHeight');
 }
 
 function setupEventListeners() {
     // Tab switching
-    elements.tabButtons.forEach(button => {
+    elements.tabButtons.forEach((button) => {
         button.addEventListener('click', (e) => {
             switchTab(e.target.dataset.tab);
         });
@@ -62,10 +69,18 @@ function setupEventListeners() {
     elements.deviceSelect.addEventListener('change', () => changeDevice());
     elements.orientationBtn.addEventListener('click', () => toggleOrientation());
 
+    // Add event listeners for custom size inputs
+    if (elements.customWidth && elements.customHeight) {
+        elements.customWidth.addEventListener('input', () => applyCustomSize());
+        elements.customHeight.addEventListener('input', () => applyCustomSize());
+    }
+
     // Auto-resize textareas
-    [elements.htmlEditor, elements.cssEditor, elements.jsEditor].forEach(editor => {
-        editor.addEventListener('input', () => autoResize(editor));
-    });
+    [elements.htmlEditor, elements.cssEditor, elements.jsEditor].forEach(
+        (editor) => {
+            editor.addEventListener('input', () => autoResize(editor));
+        }
+    );
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
@@ -92,27 +107,150 @@ function setupEventListeners() {
     });
 }
 
+function setupResizablePanels() {
+    const divider = document.getElementById('verticalDivider');
+    const editorsPanel = document.querySelector('.editors-panel');
+    const previewPanel = document.querySelector('.preview-panel');
+    if (!divider || !editorsPanel || !previewPanel) return;
+
+    let isDragging = false;
+    let startX = 0;
+    let startEditorsWidth = 0;
+    let startPreviewWidth = 0;
+
+    divider.addEventListener('mousedown', (e) => {
+        if (window.innerWidth < 1024) return;
+        isDragging = true;
+        startX = e.clientX;
+        startEditorsWidth = editorsPanel.offsetWidth;
+        startPreviewWidth = previewPanel.offsetWidth;
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const dx = e.clientX - startX;
+        const containerWidth = editorsPanel.parentNode.offsetWidth;
+        let newEditorsWidth = startEditorsWidth + dx;
+        let newPreviewWidth = startPreviewWidth - dx;
+        // Set min/max widths
+        const minWidth = 300;
+        if (newEditorsWidth < minWidth || newPreviewWidth < minWidth) return;
+        editorsPanel.style.flex = 'none';
+        previewPanel.style.flex = 'none';
+        editorsPanel.style.width = newEditorsWidth + 'px';
+        previewPanel.style.width = newPreviewWidth + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isDragging) {
+            isDragging = false;
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        }
+    });
+
+    // Reset panel widths on window resize or device switch
+    window.addEventListener('resize', () => {
+        if (window.innerWidth < 1024) {
+            editorsPanel.style.width = '';
+            previewPanel.style.width = '';
+            editorsPanel.style.flex = '';
+            previewPanel.style.flex = '';
+        }
+    });
+}
+
+function setupShareFeature() {
+    const shareBtn = document.getElementById('shareBtn');
+    const shareModal = document.getElementById('shareModal');
+    const shareLinkInput = document.getElementById('shareLink');
+    const copyBtn = document.getElementById('copyShareLinkBtn');
+    const closeBtn = document.getElementById('closeShareModalBtn');
+
+    if (!shareBtn || !shareModal || !shareLinkInput || !copyBtn || !closeBtn)
+        return;
+
+    shareBtn.addEventListener('click', () => {
+        const html = elements.htmlEditor.value;
+        const css = elements.cssEditor.value;
+        const js = elements.jsEditor.value;
+        // Encode code as base64 JSON
+        const codeObj = { html, css, js };
+        const codeStr = JSON.stringify(codeObj);
+        const encoded = btoa(unescape(encodeURIComponent(codeStr)));
+        // Generate shareable link
+        const url = `${window.location.origin}${window.location.pathname}#code=${encoded}`;
+        shareLinkInput.value = url;
+        shareModal.style.display = 'flex';
+        shareLinkInput.select();
+    });
+
+    copyBtn.addEventListener('click', () => {
+        shareLinkInput.select();
+        document.execCommand('copy');
+        showStatus('Share link copied!', 'success');
+    });
+
+    closeBtn.addEventListener('click', () => {
+        shareModal.style.display = 'none';
+    });
+
+    // Close modal on overlay click
+    shareModal.addEventListener('click', (e) => {
+        if (e.target === shareModal) {
+            shareModal.style.display = 'none';
+        }
+    });
+}
+
+function loadCodeFromURL() {
+    if (window.location.hash.startsWith('#code=')) {
+        try {
+            const encoded = window.location.hash.replace('#code=', '');
+            const codeStr = decodeURIComponent(escape(atob(encoded)));
+            const codeObj = JSON.parse(codeStr);
+            if (codeObj.html !== undefined)
+                elements.htmlEditor.value = codeObj.html;
+            if (codeObj.css !== undefined)
+                elements.cssEditor.value = codeObj.css;
+            if (codeObj.js !== undefined) elements.jsEditor.value = codeObj.js;
+            // Auto-resize after loading
+            [
+                elements.htmlEditor,
+                elements.cssEditor,
+                elements.jsEditor,
+            ].forEach((editor) => autoResize(editor));
+            updatePreview();
+            showStatus('Loaded shared code!', 'success');
+        } catch (e) {
+            showStatus('Failed to load shared code.', 'error');
+        }
+    }
+}
+
 function switchTab(tabName) {
     if (!tabName) return;
-    
+
     state.currentTab = tabName;
-    
+
     // Update tab buttons
-    elements.tabButtons.forEach(btn => {
+    elements.tabButtons.forEach((btn) => {
         btn.classList.remove('active');
         if (btn.dataset.tab === tabName) {
             btn.classList.add('active');
         }
     });
-    
+
     // Update editor wrappers
-    elements.editorWrappers.forEach(wrapper => {
+    elements.editorWrappers.forEach((wrapper) => {
         wrapper.classList.remove('active');
         if (wrapper.id === `${tabName}-editor`) {
             wrapper.classList.add('active');
         }
     });
-    
+
     // Focus the active editor
     setTimeout(() => {
         const activeEditor = document.querySelector(`#${tabName}Code`);
@@ -124,37 +262,121 @@ function switchTab(tabName) {
 
 function changeDevice() {
     const selectedDevice = elements.deviceSelect.value;
-    
+
+    // Toggle custom size controls visibility
+    if (elements.customSizeControls) {
+        elements.customSizeControls.style.display =
+            selectedDevice === 'custom' ? 'flex' : 'none';
+    }
+
     // Remove all device classes
     elements.deviceFrame.className = 'device-frame';
-    
+
+    // Clear any custom inline styles when switching to a different device
+    if (selectedDevice !== 'custom') {
+        elements.deviceFrame.style.width = '';
+        elements.deviceFrame.style.height = '';
+    }
+
     // Add selected device class
-    if (selectedDevice !== 'responsive') {
+    if (selectedDevice !== 'responsive' && selectedDevice !== 'custom') {
         elements.deviceFrame.classList.add(selectedDevice);
-        
+
         // Apply orientation if not responsive
-        if (state.currentOrientation === 'landscape' && selectedDevice !== 'laptop' && selectedDevice !== 'laptop-l' && selectedDevice !== 'desktop') {
+        if (
+            state.currentOrientation === 'landscape' &&
+            selectedDevice !== 'laptop' &&
+            selectedDevice !== 'laptop-l' &&
+            selectedDevice !== 'desktop'
+        ) {
             elements.deviceFrame.classList.add('landscape');
         }
-    } else {
+    } else if (selectedDevice === 'responsive') {
         elements.deviceFrame.classList.add('responsive');
+    } else if (selectedDevice === 'custom') {
+        // Apply custom size if values exist
+        applyCustomSize();
     }
-    
+
     updatePreviewInfo();
     showStatus(`Switched to ${getDeviceDisplayName(selectedDevice)}`, 'info');
 }
 
+function applyCustomSize() {
+    if (!elements.customWidth || !elements.customHeight) return;
+
+    const width = elements.customWidth.value || 800;
+    const height = elements.customHeight.value || 600;
+
+    // Apply custom size to device frame
+    elements.deviceFrame.style.width = `${width}px`;
+    elements.deviceFrame.style.height = `${height}px`;
+    elements.deviceFrame.classList.add('custom-size');
+
+    updatePreviewInfo();
+}
+
+function getDeviceDisplayName(device) {
+    const deviceNames = {
+        responsive: 'Responsive',
+        custom: 'Custom Size',
+        'mobile-s': 'Mobile S (320px)',
+        'mobile-m': 'Mobile M (375px)',
+        'mobile-l': 'Mobile L (425px)',
+        tablet: 'Tablet (768px)',
+        laptop: 'Laptop (1024px)',
+        'laptop-l': 'Laptop L (1440px)',
+        desktop: 'Desktop (2560px)',
+    };
+    return deviceNames[device] || device;
+}
+
+function updatePreviewInfo() {
+    const selectedDevice = elements.deviceSelect.value;
+    const deviceName = getDeviceDisplayName(selectedDevice);
+    let sizeInfo = '';
+
+    if (
+        selectedDevice === 'custom' &&
+        elements.customWidth &&
+        elements.customHeight
+    ) {
+        const width = elements.customWidth.value || 800;
+        const height = elements.customHeight.value || 600;
+        sizeInfo = ` (${width}×${height})`;
+    }
+
+    const orientationText =
+        selectedDevice !== 'responsive' &&
+        selectedDevice !== 'custom' &&
+        selectedDevice !== 'laptop' &&
+        selectedDevice !== 'laptop-l' &&
+        selectedDevice !== 'desktop' ?
+        ` - ${state.currentOrientation}` :
+        '';
+
+    elements.previewInfo.querySelector(
+        '.current-size'
+    ).textContent = `${deviceName}${sizeInfo}${orientationText}`;
+}
+
 function toggleOrientation() {
     const selectedDevice = elements.deviceSelect.value;
-    
+
     // Only allow orientation toggle for mobile and tablet devices
-    if (selectedDevice === 'responsive' || selectedDevice === 'laptop' || selectedDevice === 'laptop-l' || selectedDevice === 'desktop') {
+    if (
+        selectedDevice === 'responsive' ||
+        selectedDevice === 'laptop' ||
+        selectedDevice === 'laptop-l' ||
+        selectedDevice === 'desktop'
+    ) {
         showStatus('Orientation toggle not available for this device', 'info');
         return;
     }
-    
-    state.currentOrientation = state.currentOrientation === 'portrait' ? 'landscape' : 'portrait';
-    
+
+    state.currentOrientation =
+        state.currentOrientation === 'portrait' ? 'landscape' : 'portrait';
+
     // Update button appearance
     if (state.currentOrientation === 'landscape') {
         elements.orientationBtn.classList.add('landscape');
@@ -163,33 +385,45 @@ function toggleOrientation() {
         elements.orientationBtn.classList.remove('landscape');
         elements.orientationBtn.title = 'Switch to Landscape';
     }
-    
+
     // Apply orientation to device frame
-    elements.deviceFrame.classList.toggle('landscape', state.currentOrientation === 'landscape');
-    
+    elements.deviceFrame.classList.toggle(
+        'landscape',
+        state.currentOrientation === 'landscape'
+    );
+
     updatePreviewInfo();
     showStatus(`Switched to ${state.currentOrientation} orientation`, 'info');
 }
 
 function toggleDevice() {
-    const devices = ['responsive', 'mobile-s', 'mobile-m', 'mobile-l', 'tablet', 'laptop', 'laptop-l', 'desktop'];
+    const devices = [
+        'responsive',
+        'mobile-s',
+        'mobile-m',
+        'mobile-l',
+        'tablet',
+        'laptop',
+        'laptop-l',
+        'desktop',
+    ];
     const currentIndex = devices.indexOf(elements.deviceSelect.value);
     const nextIndex = (currentIndex + 1) % devices.length;
-    
+
     elements.deviceSelect.value = devices[nextIndex];
     changeDevice();
 }
 
 function getDeviceDisplayName(device) {
     const deviceNames = {
-        'responsive': 'Responsive',
+        responsive: 'Responsive',
         'mobile-s': 'Mobile S (320px)',
         'mobile-m': 'Mobile M (375px)',
         'mobile-l': 'Mobile L (425px)',
-        'tablet': 'Tablet (768px)',
-        'laptop': 'Laptop (1024px)',
+        tablet: 'Tablet (768px)',
+        laptop: 'Laptop (1024px)',
         'laptop-l': 'Laptop L (1440px)',
-        'desktop': 'Desktop (2560px)'
+        desktop: 'Desktop (2560px)',
     };
     return deviceNames[device] || device;
 }
@@ -197,11 +431,17 @@ function getDeviceDisplayName(device) {
 function updatePreviewInfo() {
     const selectedDevice = elements.deviceSelect.value;
     const deviceName = getDeviceDisplayName(selectedDevice);
-    const orientationText = selectedDevice !== 'responsive' && selectedDevice !== 'laptop' && selectedDevice !== 'laptop-l' && selectedDevice !== 'desktop' 
-        ? ` - ${state.currentOrientation}` 
-        : '';
-    
-    elements.previewInfo.querySelector('.current-size').textContent = `${deviceName}${orientationText}`;
+    const orientationText =
+        selectedDevice !== 'responsive' &&
+        selectedDevice !== 'laptop' &&
+        selectedDevice !== 'laptop-l' &&
+        selectedDevice !== 'desktop' ?
+        ` - ${state.currentOrientation}` :
+        '';
+
+    elements.previewInfo.querySelector(
+        '.current-size'
+    ).textContent = `${deviceName}${orientationText}`;
 }
 
 function loadDefaultCode() {
@@ -454,10 +694,12 @@ document.addEventListener('DOMContentLoaded', function() {
 });`;
 
     // Auto-resize all textareas
-    [elements.htmlEditor, elements.cssEditor, elements.jsEditor].forEach(editor => {
-        autoResize(editor);
-    });
-    
+    [elements.htmlEditor, elements.cssEditor, elements.jsEditor].forEach(
+        (editor) => {
+            autoResize(editor);
+        }
+    );
+
     // Initialize device frame
     changeDevice();
 }
@@ -510,9 +752,15 @@ function updatePreview() {
 
 function resetCode() {
     if (confirm('Are you sure you want to reset all code? This action cannot be undone.')) {
-        loadDefaultCode();
+        // Clear all fields
+        elements.htmlEditor.value = '';
+        elements.cssEditor.value = '';
+        elements.jsEditor.value = '';
+
+        // Resize editors and update preview
+        [elements.htmlEditor, elements.cssEditor, elements.jsEditor].forEach(editor => autoResize(editor));
         updatePreview();
-        showStatus('Code reset to default', 'success');
+        showStatus('All code cleared!', 'success');
     }
 }
 
@@ -546,7 +794,7 @@ function downloadCode() {
     a.download = 'codepreview-export.html';
     a.click();
     URL.revokeObjectURL(url);
-    
+
     showStatus('Code exported successfully!', 'success');
 }
 
@@ -554,7 +802,7 @@ function toggleFullscreen() {
     const previewPanel = document.querySelector('.preview-panel');
     const editorsPanel = document.querySelector('.editors-panel');
     const deviceFrame = elements.deviceFrame;
-    
+
     if (previewPanel.classList.contains('fullscreen')) {
         previewPanel.classList.remove('fullscreen');
         editorsPanel.style.display = 'flex';
@@ -565,6 +813,7 @@ function toggleFullscreen() {
         previewPanel.classList.add('fullscreen');
         editorsPanel.style.display = 'none';
         elements.fullscreenBtn.innerHTML = '<span class="icon">⛷</span>';
+
         // In fullscreen, make responsive if not already
         if (elements.deviceSelect.value !== 'responsive') {
             deviceFrame.classList.add('fullscreen-override');
@@ -572,6 +821,12 @@ function toggleFullscreen() {
             deviceFrame.style.height = '100%';
             deviceFrame.style.maxWidth = 'none';
             deviceFrame.style.maxHeight = 'none';
+
+            // Update preview info for fullscreen mode
+            const previewInfo = document.querySelector('.preview-info');
+            if (previewInfo) {
+                previewInfo.textContent = `Fullscreen (${Math.round(window.innerWidth)}px)`;
+            }
         }
     }
 }
@@ -598,7 +853,7 @@ function showStatus(message, type = 'info') {
         z-index: 1000;
         animation: slideInUp 0.3s ease;
     `;
-    
+
     if (type === 'success') {
         notification.style.background = '#10b981';
     } else if (type === 'error') {
@@ -606,9 +861,9 @@ function showStatus(message, type = 'info') {
     } else {
         notification.style.background = '#6366f1';
     }
-    
+
     document.body.appendChild(notification);
-    
+
     setTimeout(() => {
         notification.style.animation = 'slideOutDown 0.3s ease';
         setTimeout(() => {
@@ -661,3 +916,120 @@ animationStyles.textContent = `
 `;
 
 document.head.appendChild(animationStyles);
+
+
+function setupResponsiveDrag() {
+    const deviceFrame = elements.deviceFrame;
+    let isResizing = false;
+    let startX;
+    let startWidth;
+
+    // Function to handle mouse down on the resize handle
+    function startResize(e) {
+        // Only apply to responsive mode or fullscreen mode
+        if (!deviceFrame.classList.contains('responsive') &&
+            !deviceFrame.classList.contains('fullscreen-override')) return;
+
+        // Check if we're on the resize handle (right 12px of the frame)
+        const rect = deviceFrame.getBoundingClientRect();
+        if (e.clientX < rect.right - 12) return;
+
+        isResizing = true;
+        startX = e.clientX;
+        startWidth = deviceFrame.offsetWidth;
+
+        // Add resize-active class to body for cursor indication
+        document.body.classList.add('resize-active');
+
+        // Prevent text selection during drag
+        e.preventDefault();
+    }
+
+    // Function to handle mouse move during resize
+    function doResize(e) {
+        if (!isResizing) return;
+
+        // Calculate new width based on mouse movement
+        // Moving right increases width, moving left decreases width
+        const width = startWidth + (e.clientX - startX);
+
+        // Set min and max width constraints
+        const minWidth = 320; // Mobile small size
+        let maxWidth;
+
+        if (deviceFrame.classList.contains('fullscreen-override')) {
+            // In fullscreen, use window width as max
+            maxWidth = window.innerWidth - 20; // Leave a small margin
+        } else {
+            // In normal view, use container width
+            const container = document.querySelector('.preview-container');
+            maxWidth = container ? container.offsetWidth - 20 : window.innerWidth - 20;
+        }
+
+        const newWidth = Math.max(minWidth, Math.min(width, maxWidth));
+        deviceFrame.style.width = `${newWidth}px`;
+
+        // Update the preview info to show current width
+        const previewInfo = document.querySelector('.preview-info');
+        if (previewInfo) {
+            const mode = deviceFrame.classList.contains('fullscreen-override') ?
+                'Fullscreen' : 'Responsive';
+            previewInfo.textContent = `${mode} (${newWidth}px)`;
+        }
+    }
+
+    // Function to handle mouse up to end resize
+    function stopResize() {
+        if (isResizing) {
+            isResizing = false;
+            document.body.classList.remove('resize-active');
+        }
+    }
+
+    // Add event listeners
+    deviceFrame.addEventListener('mousedown', startResize);
+    document.addEventListener('mousemove', doResize);
+    document.addEventListener('mouseup', stopResize);
+
+    // Handle edge cases: mouse leaving window and touch events
+    document.addEventListener('mouseleave', stopResize);
+
+    // Add touch support for mobile devices
+    deviceFrame.addEventListener('touchstart', (e) => {
+        const touch = e.touches[0];
+        const rect = deviceFrame.getBoundingClientRect();
+        if (touch.clientX < rect.right - 12) return;
+
+        isResizing = true;
+        startX = touch.clientX;
+        startWidth = deviceFrame.offsetWidth;
+        document.body.classList.add('resize-active');
+        e.preventDefault();
+    });
+
+    document.addEventListener('touchmove', (e) => {
+        if (!isResizing) return;
+        const touch = e.touches[0];
+
+        const width = startWidth + (touch.clientX - startX);
+        const minWidth = 320;
+        let maxWidth = deviceFrame.classList.contains('fullscreen-override') ?
+            window.innerWidth - 20 :
+            document.querySelector('.preview-container').offsetWidth - 20;
+
+        const newWidth = Math.max(minWidth, Math.min(width, maxWidth));
+        deviceFrame.style.width = `${newWidth}px`;
+
+        const previewInfo = document.querySelector('.preview-info');
+        if (previewInfo) {
+            const mode = deviceFrame.classList.contains('fullscreen-override') ?
+                'Fullscreen' : 'Responsive';
+            previewInfo.textContent = `${mode} (${newWidth}px)`;
+        }
+
+        e.preventDefault();
+    });
+
+    document.addEventListener('touchend', stopResize);
+    document.addEventListener('touchcancel', stopResize);
+}
